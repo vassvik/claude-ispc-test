@@ -78,7 +78,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     wc.hInstance = hInstance;
     wc.lpszClassName = "RayMandel";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    RegisterClass(&wc);
+    if (!RegisterClass(&wc)) {
+        timeEndPeriod(1);
+        MessageBox(NULL, "Failed to register window class", "Error", MB_OK | MB_ICONERROR);
+        return 1;
+    }
 
     RECT rect = {0, 0, FULL_WIDTH, HEIGHT};
     AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
@@ -86,6 +90,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     HWND hwnd = CreateWindow("RayMandel", "Raytracer | Mandelbrot", WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top,
         NULL, NULL, hInstance, NULL);
+    if (!hwnd) {
+        timeEndPeriod(1);
+        MessageBox(NULL, "Failed to create window", "Error", MB_OK | MB_ICONERROR);
+        return 1;
+    }
 
     ShowWindow(hwnd, nCmdShow);
 
@@ -96,7 +105,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     MSG msg;
     bool running = true;
 
-    Stats ray_stats, mandel_stats;
+    Stats mandel_stats;
     char title[256] = "Collecting...";
     char stats_str[128] = "";
 
@@ -110,6 +119,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     double max_zoom = 78125.0;
     bool zooming_in = true;
 
+    // Render static raytracer scene once (it never changes)
+    QueryPerformanceCounter(&start);
+    ispc::render_whitted(pixels_ray, HALF_WIDTH, HEIGHT);
+    QueryPerformanceCounter(&end);
+    double ray_ms = (end.QuadPart - start.QuadPart) * 1000.0 / freq.QuadPart;
+
     while (running) {
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) running = false;
@@ -117,13 +132,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             DispatchMessage(&msg);
         }
         if (!running) break;
-
-        // Render Whitted raytracer (static scene)
-        QueryPerformanceCounter(&start);
-        ispc::render_whitted(pixels_ray, HALF_WIDTH, HEIGHT);
-        QueryPerformanceCounter(&end);
-        double ray_ms = (end.QuadPart - start.QuadPart) * 1000.0 / freq.QuadPart;
-        ray_stats.add(ray_ms);
 
         // Update zoom
         if (zooming_in) {
@@ -159,22 +167,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         double elapsed = (now.QuadPart - last_stats_time.QuadPart) * 1000.0 / freq.QuadPart;
 
         if (elapsed >= 1000.0) {
-            ray_stats.compute();
             mandel_stats.compute();
 
-            snprintf(stats_str, sizeof(stats_str), "| Avg: Ray=%.2f+/-%.2f Mandel=%.2f+/-%.2f",
-                ray_stats.mean, ray_stats.stderr_,
+            snprintf(stats_str, sizeof(stats_str), "| Avg: %.2f+/-%.2fms",
                 mandel_stats.mean, mandel_stats.stderr_);
 
-            ray_stats.reset();
             mandel_stats.reset();
             last_stats_time = now;
         }
 
-        // Title bar: instantaneous + accumulated
-        snprintf(title, sizeof(title), "Ray: %.2fms | Mandel: %.2fms | Zoom: %.0fx %s",
+        // Title bar: raytracer (static), Mandelbrot (animated)
+        snprintf(title, sizeof(title), "Ray: %.2fms (cached) | Mandel: %.2fms | Zoom: %.0fx %s",
             ray_ms, mandel_ms, zoom, stats_str);
         SetWindowText(hwnd, title);
+
+        // Frame rate limiting - prevent busy-waiting
+        Sleep(1);
     }
 
     timeEndPeriod(1);

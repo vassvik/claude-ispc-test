@@ -7,7 +7,7 @@ A real-time demonstration of two computationally intensive graphics algorithms i
 
 ![Demo Screenshot](screenshot_final.png)
 
-*2048×1024 window achieving ~40ms (raytracer) + ~90ms (Mandelbrot) per frame on AVX2*
+*2048×1024 window. Raytracer renders once (~40ms), Mandelbrot animates (~90ms/frame on AVX2)*
 
 ---
 
@@ -72,8 +72,7 @@ ISPC distinguishes between:
 export void render_whitted(
     uniform uint32 pixels[],    // uniform: one pointer for all lanes
     uniform int width,          // uniform: shared by all lanes
-    uniform int height,
-    uniform float time
+    uniform int height
 ) {
     uniform float fov = 1.0f;   // uniform: same for all pixels
 
@@ -119,8 +118,8 @@ inline Vec3 vec3_add(Vec3 a, Vec3 b) {
 Scene constants are declared `static const uniform` to ensure they're computed once and shared:
 
 ```c
-static const uniform float sphere1_x = -0.8f;
-static const uniform float sphere1_y = 1.0f;
+static const uniform float sphere1_radius = 1.0f;
+static const uniform Vec3 sphere1_center = {-0.8f, 1.0f, 1.0f};
 // ...
 ```
 
@@ -157,7 +156,7 @@ AVX2 provides 4-wide double SIMD (vs 8-wide float), so Mandelbrot runs at half t
 
 The raytracer is faster despite being more complex because:
 1. Float (8-wide) vs double (4-wide) SIMD
-2. Fixed recursion depth (5) vs variable iterations (269–800)
+2. Fixed recursion depth (5) vs variable iterations (200–800)
 3. Most rays terminate within 2–3 bounces; many Mandelbrot points iterate to max
 
 ### Compiling for Different Targets
@@ -227,20 +226,21 @@ The discriminant `b² - 4ac` determines:
 - **Positive**: Ray pierces sphere (two intersections, take the smaller positive t)
 
 ```c
+// Optimized: assumes normalized ray direction (a = 1), uses half_b to reduce operations
 inline float intersect_sphere(Ray r, Vec3 center, float radius) {
     Vec3 oc = vec3_sub(r.origin, center);
-    float a = vec3_dot(r.dir, r.dir);
-    float b = 2.0f * vec3_dot(oc, r.dir);
+    float half_b = vec3_dot(oc, r.dir);
     float c = vec3_dot(oc, oc) - radius * radius;
-    float discriminant = b * b - 4.0f * a * c;
+    float discriminant = half_b * half_b - c;
 
     if (discriminant < 0.0f) return -1.0f;
 
-    float t = (-b - sqrt(discriminant)) / (2.0f * a);
-    if (t > 0.001f) return t;  // Small epsilon to avoid self-intersection
+    float sqrt_disc = sqrt(discriminant);
+    float t = -half_b - sqrt_disc;
+    if (t > EPSILON_SHADOW) return t;
 
-    t = (-b + sqrt(discriminant)) / (2.0f * a);
-    if (t > 0.001f) return t;
+    t = -half_b + sqrt_disc;
+    if (t > EPSILON_SHADOW) return t;
 
     return -1.0f;
 }
@@ -469,17 +469,17 @@ inline Vec3 palette(float t) {
     t = clamp(t, 0.0f, 1.0f);
 
     if (t < 0.16f)      // Dark blue to blue
-        return lerp(vec3(0,0,0.1), vec3(0.1,0.1,0.4), t/0.16);
+        return vec3_lerp(make_vec3(0,0,0.1), make_vec3(0.1,0.1,0.4), t/0.16);
     else if (t < 0.33f) // Blue to cyan
-        return lerp(vec3(0.1,0.1,0.4), vec3(0.2,0.5,0.8), (t-0.16)/0.17);
+        return vec3_lerp(make_vec3(0.1,0.1,0.4), make_vec3(0.2,0.5,0.8), (t-0.16)/0.17);
     else if (t < 0.5f)  // Cyan to yellow
-        return lerp(vec3(0.2,0.5,0.8), vec3(0.9,0.9,0.2), (t-0.33)/0.17);
+        return vec3_lerp(make_vec3(0.2,0.5,0.8), make_vec3(0.9,0.9,0.2), (t-0.33)/0.17);
     else if (t < 0.67f) // Yellow to orange
-        return lerp(vec3(0.9,0.9,0.2), vec3(1.0,0.5,0.0), (t-0.5)/0.17);
+        return vec3_lerp(make_vec3(0.9,0.9,0.2), make_vec3(1.0,0.5,0.0), (t-0.5)/0.17);
     else if (t < 0.83f) // Orange to red
-        return lerp(vec3(1.0,0.5,0.0), vec3(0.8,0.1,0.1), (t-0.67)/0.16);
+        return vec3_lerp(make_vec3(1.0,0.5,0.0), make_vec3(0.8,0.1,0.1), (t-0.67)/0.16);
     else                // Red to dark
-        return lerp(vec3(0.8,0.1,0.1), vec3(0.2,0.0,0.0), (t-0.83)/0.17);
+        return vec3_lerp(make_vec3(0.8,0.1,0.1), make_vec3(0.2,0.0,0.0), (t-0.83)/0.17);
 }
 ```
 
@@ -558,7 +558,11 @@ v = (0.5 - py/height) * fov           // +0.5 at top, -0.5 at bottom
 
 ### Version 2
 ![Version 2](screenshot_v2.png)
-*Still upside down, but improved: added orange sphere, larger blue-gray checkerboard, sky gradient, specular highlights, gamma correction, warm mirror tint, cyan glass tint, floor reflections, soft shadows, fire Mandelbrot palette*
+*Improved scene (still upside down): added orange sphere, larger blue-gray checkerboard, sky gradient, specular highlights, gamma correction, warm mirror tint, cyan glass tint, floor reflections, soft shadows, fire Mandelbrot palette*
+
+### Final Version
+![Final](screenshot_final.png)
+*Fixed orientation (sky at top), all v2 improvements retained. The GDI coordinate fix (`v = 0.5 - py/height`) ensures rays point upward at screen top.*
 
 ---
 

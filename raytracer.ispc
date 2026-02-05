@@ -14,6 +14,28 @@ static const uniform float EPSILON_PARALLEL = 0.0001f;  // Guard for parallel ra
 static const uniform double LOG2_E = 1.4426950408889634; // 1/ln(2) for log2 computation
 static const uniform float MANDEL_COLOR_FREQ = 0.015f;   // Color palette cycle frequency
 
+// Lighting constants
+static const uniform float AMBIENT_STRENGTH = 0.15f;     // Ambient light contribution
+static const uniform float DIFFUSE_STRENGTH = 0.85f;     // Diffuse light contribution
+static const uniform float FLOOR_REFLECTIVITY = 0.15f;   // Floor reflection coefficient
+static const uniform float MIRROR_SPEC_POWER = 80.0f;    // Mirror specular exponent
+static const uniform float DIFFUSE_SPEC_POWER = 30.0f;   // Diffuse sphere specular exponent
+static const uniform float DIFFUSE_SPEC_STRENGTH = 0.5f; // Diffuse sphere specular intensity
+
+// Shadow attenuation values
+static const uniform float SHADOW_OPAQUE = 0.25f;        // Shadow from opaque sphere
+static const uniform float SHADOW_DIFFUSE = 0.35f;       // Shadow from diffuse sphere
+static const uniform float SHADOW_GLASS = 0.6f;          // Partial shadow through glass
+
+// Hit type enumeration
+enum HitType {
+    HIT_NONE = -1,
+    HIT_FLOOR = 0,
+    HIT_MIRROR = 1,
+    HIT_GLASS = 2,
+    HIT_DIFFUSE = 3
+};
+
 // ============================================================================
 // Vector math utilities
 // ============================================================================
@@ -166,8 +188,7 @@ inline Vec3 checkerboard_color(Vec3 p) {
     float scale = 1.5f;  // Larger squares
     int cx = (int)floor(p.x / scale);
     int cz = (int)floor(p.z / scale);
-    if (p.x < 0) cx--;
-    if (p.z < 0) cz--;
+    // floor() already handles negative coordinates correctly
 
     if ((cx + cz) & 1) {
         return make_vec3(0.95f, 0.95f, 0.95f);  // White
@@ -191,14 +212,14 @@ inline float fresnel_schlick(float cos_theta, float n1, float n2) {
 // Refraction (Snell's law)
 // ============================================================================
 
+// Note: assumes v is already normalized (ray directions are normalized at creation)
 inline bool refract(Vec3 v, Vec3 n, float ni_over_nt, Vec3 &refracted) {
-    Vec3 uv = vec3_normalize(v);
-    float dt = vec3_dot(uv, n);
+    float dt = vec3_dot(v, n);
     float discriminant = 1.0f - ni_over_nt * ni_over_nt * (1.0f - dt * dt);
 
     if (discriminant > 0.0f) {
         refracted = vec3_sub(
-            vec3_mul(vec3_sub(uv, vec3_mul(n, dt)), ni_over_nt),
+            vec3_mul(vec3_sub(v, vec3_mul(n, dt)), ni_over_nt),
             vec3_mul(n, sqrt(discriminant))
         );
         return true;
@@ -220,31 +241,31 @@ inline Vec3 shade_hit(Ray r, float t, int hit_type, int depth) {
     Vec3 color = make_vec3(0.0f, 0.0f, 0.0f);
     Vec3 normal;
 
-    if (hit_type == 0) {
+    if (hit_type == HIT_FLOOR) {
         // Floor
         normal = make_vec3(0.0f, 1.0f, 0.0f);
         Vec3 base_color = checkerboard_color(hit_point);
 
-        // Shadow check - test all spheres, first hit wins
+        // Shadow check - test all spheres, first in code order wins
         Ray shadow_ray = make_ray(vec3_add(hit_point, vec3_mul(normal, EPSILON_SHADOW)), to_light);
         float shadow = 1.0f;
 
-        if (intersect_sphere(shadow_ray, sphere1_center, sphere1_radius) > 0.0f) shadow = 0.25f;
-        else if (intersect_sphere(shadow_ray, sphere2_center, sphere2_radius) > 0.0f) shadow = 0.6f;
-        else if (intersect_sphere(shadow_ray, sphere3_center, sphere3_radius) > 0.0f) shadow = 0.35f;
+        if (intersect_sphere(shadow_ray, sphere1_center, sphere1_radius) > 0.0f) shadow = SHADOW_OPAQUE;
+        else if (intersect_sphere(shadow_ray, sphere2_center, sphere2_radius) > 0.0f) shadow = SHADOW_GLASS;
+        else if (intersect_sphere(shadow_ray, sphere3_center, sphere3_radius) > 0.0f) shadow = SHADOW_DIFFUSE;
 
         float diffuse = max(0.0f, vec3_dot(normal, to_light));
-        color = vec3_mul(base_color, (0.15f + 0.85f * diffuse * shadow));
+        color = vec3_mul(base_color, (AMBIENT_STRENGTH + DIFFUSE_STRENGTH * diffuse * shadow));
 
         // Subtle reflection on floor
         if (depth > 0) {
             Vec3 reflect_dir = vec3_reflect(r.dir, normal);
             Ray reflect_ray = make_ray(vec3_add(hit_point, vec3_mul(normal, EPSILON_SHADOW)), reflect_dir);
             Vec3 reflect_color = trace_ray(reflect_ray, depth - 1);
-            color = vec3_lerp(color, reflect_color, 0.15f);
+            color = vec3_lerp(color, reflect_color, FLOOR_REFLECTIVITY);
         }
     }
-    else if (hit_type == 1) {
+    else if (hit_type == HIT_MIRROR) {
         // Mirror sphere - pure reflection with slight tint
         normal = vec3_normalize(vec3_sub(hit_point, sphere1_center));
 
@@ -258,10 +279,10 @@ inline Vec3 shade_hit(Ray r, float t, int hit_type, int depth) {
 
         // Specular highlight
         Vec3 half_vec = vec3_normalize(vec3_add(to_light, view_dir));
-        float spec = pow(max(0.0f, vec3_dot(normal, half_vec)), 80.0f);
+        float spec = pow(max(0.0f, vec3_dot(normal, half_vec)), MIRROR_SPEC_POWER);
         color = vec3_add(color, make_vec3(spec, spec, spec));
     }
-    else if (hit_type == 2) {
+    else if (hit_type == HIT_GLASS) {
         // Glass sphere (refractive)
         normal = vec3_normalize(vec3_sub(hit_point, sphere2_center));
 
@@ -301,23 +322,23 @@ inline Vec3 shade_hit(Ray r, float t, int hit_type, int depth) {
         // Slight cyan tint for glass
         color = vec3_mul_vec(color, make_vec3(0.95f, 0.98f, 1.0f));
     }
-    else if (hit_type == 3) {
+    else if (hit_type == HIT_DIFFUSE) {
         // Small diffuse sphere - red/orange
         normal = vec3_normalize(vec3_sub(hit_point, sphere3_center));
         Vec3 base_color = make_vec3(0.9f, 0.3f, 0.1f);  // Orange-red
 
-        // Shadow check - first hit wins
+        // Shadow check - first in code order wins
         Ray shadow_ray = make_ray(vec3_add(hit_point, vec3_mul(normal, EPSILON_SHADOW)), to_light);
         float shadow = 1.0f;
-        if (intersect_sphere(shadow_ray, sphere1_center, sphere1_radius) > 0.0f) shadow = 0.3f;
-        else if (intersect_sphere(shadow_ray, sphere2_center, sphere2_radius) > 0.0f) shadow = 0.6f;
+        if (intersect_sphere(shadow_ray, sphere1_center, sphere1_radius) > 0.0f) shadow = SHADOW_OPAQUE;
+        else if (intersect_sphere(shadow_ray, sphere2_center, sphere2_radius) > 0.0f) shadow = SHADOW_GLASS;
 
         float diffuse = max(0.0f, vec3_dot(normal, to_light));
         color = vec3_mul(base_color, (0.2f + 0.8f * diffuse * shadow));
 
         // Specular
         Vec3 half_vec = vec3_normalize(vec3_add(to_light, view_dir));
-        float spec = pow(max(0.0f, vec3_dot(normal, half_vec)), 30.0f) * 0.5f;
+        float spec = pow(max(0.0f, vec3_dot(normal, half_vec)), DIFFUSE_SPEC_POWER) * DIFFUSE_SPEC_STRENGTH;
         color = vec3_add(color, make_vec3(spec, spec, spec));
     }
 
@@ -326,7 +347,7 @@ inline Vec3 shade_hit(Ray r, float t, int hit_type, int depth) {
 
 inline Vec3 trace_ray(Ray r, int depth) {
     float closest_t = 1e10f;
-    int hit_type = -1;
+    int hit_type = HIT_NONE;
 
     // Check floor (bounded rectangle to avoid artifacts at horizon)
     float t_floor = intersect_floor(r);
@@ -335,7 +356,7 @@ inline Vec3 trace_ray(Ray r, int depth) {
         if (p.x > floor_x_min && p.x < floor_x_max &&
             p.z > floor_z_min && p.z < floor_z_max) {
             closest_t = t_floor;
-            hit_type = 0;
+            hit_type = HIT_FLOOR;
         }
     }
 
@@ -343,24 +364,24 @@ inline Vec3 trace_ray(Ray r, int depth) {
     float t1 = intersect_sphere(r, sphere1_center, sphere1_radius);
     if (t1 > 0.0f && t1 < closest_t) {
         closest_t = t1;
-        hit_type = 1;
+        hit_type = HIT_MIRROR;
     }
 
     // Check sphere 2 (glass)
     float t2 = intersect_sphere(r, sphere2_center, sphere2_radius);
     if (t2 > 0.0f && t2 < closest_t) {
         closest_t = t2;
-        hit_type = 2;
+        hit_type = HIT_GLASS;
     }
 
     // Check sphere 3 (diffuse)
     float t3 = intersect_sphere(r, sphere3_center, sphere3_radius);
     if (t3 > 0.0f && t3 < closest_t) {
         closest_t = t3;
-        hit_type = 3;
+        hit_type = HIT_DIFFUSE;
     }
 
-    if (hit_type >= 0) {
+    if (hit_type != HIT_NONE) {
         return shade_hit(r, closest_t, hit_type, depth);
     }
 
@@ -489,19 +510,36 @@ export void render_mandelbrot(uniform uint32 pixels[], uniform int width, unifor
         double x0 = center_x + ((double)px - (double)width * 0.5) * scale;
         double y0 = center_y + ((double)py - (double)height * 0.5) * scale;
 
+        int iter = 0;
+        bool in_set = false;
+
+        // Early-out for main cardioid: q*(q + (x0 - 0.25)) < 0.25*y0^2
+        // where q = (x0 - 0.25)^2 + y0^2
+        double q = (x0 - 0.25) * (x0 - 0.25) + y0 * y0;
+        if (q * (q + (x0 - 0.25)) < 0.25 * y0 * y0) {
+            in_set = true;
+            iter = max_iter;
+        }
+        // Early-out for period-2 bulb: (x0 + 1)^2 + y0^2 < 1/16
+        else if ((x0 + 1.0) * (x0 + 1.0) + y0 * y0 < 0.0625) {
+            in_set = true;
+            iter = max_iter;
+        }
+
         double x = 0.0;
         double y = 0.0;
         double x2 = 0.0;
         double y2 = 0.0;
-        int iter = 0;
 
-        // Optimized iteration with cached squares
-        while (x2 + y2 <= 4.0 && iter < max_iter) {
-            y = 2.0 * x * y + y0;
-            x = x2 - y2 + x0;
-            x2 = x * x;
-            y2 = y * y;
-            iter++;
+        // Optimized iteration with cached squares (skip if already known to be in set)
+        if (!in_set) {
+            while (x2 + y2 <= 4.0 && iter < max_iter) {
+                y = 2.0 * x * y + y0;
+                x = x2 - y2 + x0;
+                x2 = x * x;
+                y2 = y * y;
+                iter++;
+            }
         }
 
         uint32 color;
