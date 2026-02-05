@@ -7,7 +7,7 @@ A real-time demonstration of two computationally intensive graphics algorithms i
 
 ![Demo Screenshot](screenshot_final.png)
 
-*2048x1024 window running at ~40ms raytracer + ~90ms Mandelbrot per frame on AVX2*
+*2048×1024 window achieving ~40ms (raytracer) + ~90ms (Mandelbrot) per frame on AVX2*
 
 ---
 
@@ -141,45 +141,24 @@ foreach (py = 0 ... height, px = 0 ... width) {
     double y0 = center_y + ((double)py - (double)height * 0.5) * scale;
 
     double x = 0.0, y = 0.0;
-    double x2 = 0.0, y2 = 0.0;  // Cache squares to avoid redundant muls
+    double x2 = 0.0, y2 = 0.0;  // Cache x² and y² (see Mandelbrot section)
     // ...
 }
 ```
 
 AVX2 provides 4-wide double SIMD (vs 8-wide float), so Mandelbrot runs at half the parallelism but with full 64-bit precision.
 
-#### 6. Cached Squares in Mandelbrot Loop
-
-Instead of computing `x*x` and `y*y` multiple times:
-
-```c
-// Naive (6 multiplications per iteration)
-while (x*x + y*y <= 4.0) {
-    double xtemp = x*x - y*y + x0;
-    y = 2*x*y + y0;
-    x = xtemp;
-}
-
-// Optimized (4 multiplications per iteration)
-while (x2 + y2 <= 4.0) {
-    y = 2.0 * x * y + y0;
-    x = x2 - y2 + x0;
-    x2 = x * x;
-    y2 = y * y;
-}
-```
-
 ### Performance Characteristics
 
 | Renderer | Time/Frame | SIMD Width | Notes |
 |----------|------------|------------|-------|
-| Raytracer | ~40ms | 8 (float) | Limited by recursion, divergent branches |
-| Mandelbrot | ~90ms | 4 (double) | Limited by iteration count, double precision |
+| Raytracer | ~40ms | 8 (float) | Recursion overhead, divergent execution across lanes |
+| Mandelbrot | ~90ms | 4 (double) | High iteration counts, half SIMD width |
 
 The raytracer is faster despite being more complex because:
 1. Float (8-wide) vs double (4-wide) SIMD
-2. Fixed recursion depth (5) vs variable iterations (200-800)
-3. Most rays hit geometry quickly; many Mandelbrot points iterate to max
+2. Fixed recursion depth (5) vs variable iterations (269–800)
+3. Most rays terminate within 2–3 bounces; many Mandelbrot points iterate to max
 
 ### Compiling for Different Targets
 
@@ -316,14 +295,16 @@ Where:
 - `θ₁` = angle of incidence
 - `θ₂` = angle of refraction
 
-The refracted direction is computed as:
+The refracted direction is computed by decomposing the ray into components parallel and perpendicular to the surface normal, then applying Snell's Law to the perpendicular component:
+
 ```c
 inline bool refract(Vec3 v, Vec3 n, float ni_over_nt, Vec3 &refracted) {
     Vec3 uv = vec3_normalize(v);
-    float dt = vec3_dot(uv, n);
+    float dt = vec3_dot(uv, n);  // cos(θ₁)
     float discriminant = 1.0f - ni_over_nt * ni_over_nt * (1.0f - dt * dt);
 
     if (discriminant > 0.0f) {
+        // Perpendicular component scaled by ratio, normal component from geometry
         refracted = vec3_sub(
             vec3_mul(vec3_sub(uv, vec3_mul(n, dt)), ni_over_nt),
             vec3_mul(n, sqrt(discriminant))
@@ -334,7 +315,7 @@ inline bool refract(Vec3 v, Vec3 n, float ni_over_nt, Vec3 &refracted) {
 }
 ```
 
-When the discriminant is negative, **total internal reflection** occurs - the light cannot exit the denser medium at that angle and reflects instead.
+When the discriminant is negative (sin²θ₂ > 1), **total internal reflection** occurs—the light cannot exit the denser medium at that angle and reflects instead.
 
 ### Fresnel Effect (Schlick Approximation)
 
@@ -364,8 +345,8 @@ Our scene contains:
 | Object | Position | Properties |
 |--------|----------|------------|
 | Mirror sphere | (-0.8, 1.0, 1.0), r=1.0 | Pure reflection, warm tint |
-| Glass sphere | (1.2, 0.6, 0.0), r=0.6 | IOR 1.52, Fresnel reflection/refraction |
-| Orange sphere | (-0.2, 0.3, -0.8), r=0.3 | Diffuse + specular |
+| Glass sphere | (1.2, 0.6, 0.0), r=0.6 | IOR 1.52 (crown glass), Fresnel reflection/refraction |
+| Orange-red sphere | (-0.2, 0.3, -0.8), r=0.3 | Diffuse + specular |
 | Floor | y = 0 | Checkerboard pattern, 15% reflective |
 | Light | (8, 12, -4) | Point light for shadows |
 | Camera | (0.5, 2.0, -4.5) | Looking at (0.2, 0.5, 1.0) |
@@ -410,6 +391,10 @@ else if (intersect_sphere(shadow_ray, sphere2_center, sphere2_radius) > 0.0f)
     shadow = 0.6f;   // Partial shadow through glass
 ```
 
+**Implementation notes:**
+- The 0.001 offset avoids self-intersection artifacts while remaining small relative to scene scale
+- Shadow attenuation values (0.25 for opaque, 0.6 for glass) are aesthetic choices—glass transmits more light than opaque surfaces
+
 ---
 
 ## Mandelbrot Set
@@ -449,19 +434,28 @@ foreach (py = 0 ... height, px = 0 ... width) {
 }
 ```
 
-**Optimization**: We cache `x²` and `y²` to avoid redundant multiplications. The escape condition `x² + y² > 4` is equivalent to `|z| > 2`.
+**Optimizations**:
+- We cache `x²` and `y²` to reduce multiplications from 6 to 4 per iteration (the naive approach computes `x*x` and `y*y` in both the escape test and the iteration)
+- The escape condition `x² + y² > 4` is equivalent to `|z| > 2`
 
 ### Smooth Coloring
 
-Basic escape-time coloring produces visible bands. For smooth gradients, we use the **continuous potential** method:
+Basic escape-time coloring produces visible bands. For smooth gradients, we use the **continuous potential** method.
+
+The key insight: the escape-time potential function converges asymptotically, and we can estimate the "fractional iteration" needed to reach exactly |z| = 2. Since |z_n| ≈ 2^(2^n) for large n outside the set, inverting gives:
 
 ```c
-double log_zn = log(x2 + y2) * 0.5;
-double nu = log(log_zn / log(2)) / log(2);
+double log_zn = log(x2 + y2) * 0.5;           // ln|z|
+double nu = log2(log2(|z|));                   // Conceptually
 double smooth_iter = iter + 1.0 - nu;
 ```
 
-This gives a fractional iteration count that varies smoothly across the image.
+The actual code uses precomputed 1/ln(2) ≈ 1.4427 for efficiency:
+```c
+double nu = log(log_zn * 1.4426950408889634) * 1.4426950408889634;
+```
+
+This gives a fractional iteration count that varies continuously across the image, eliminating banding artifacts.
 
 ### Color Palette
 
@@ -491,12 +485,12 @@ inline Vec3 palette(float t) {
 
 ### Zoom Animation
 
-The animation zooms into the point (-0.761574, -0.0847596), which lies on the boundary of the Mandelbrot set and contains infinite detail.
+The animation zooms into (-0.761574, -0.0847596), a point on the Mandelbrot set boundary with infinite self-similar detail. This coordinate comes from [Paul Bourke's Mandelbrot page](https://paulbourke.net/fractals/mandelbrot/).
 
 ```c
 double zoom = 1.0;
-double zoom_speed = 1.02;  // 2% per frame
-double max_zoom = 78125.0;
+double zoom_speed = 1.02;  // 2% per frame (smooth perceived motion)
+double max_zoom = 78125.0; // 5^7, near double-precision limit for this region
 
 // Each frame:
 if (zooming_in) {
@@ -508,18 +502,23 @@ if (zooming_in) {
 }
 ```
 
+The max zoom of 78125× is chosen to stay within double-precision limits while revealing fine structure. Beyond ~10^14× zoom, arbitrary-precision arithmetic would be needed.
+
 ### Why Double Precision?
 
 At high zoom levels, single-precision float (32-bit) runs out of precision:
-- Float has ~7 decimal digits of precision
-- At 78125x zoom, we need ~log₁₀(78125) ≈ 5 extra digits
+- Float provides ~7 significant decimal digits
+- At 78125× zoom near coordinate -0.76, we're resolving features ~3×10⁻⁵ units wide
+- This requires ~10 significant digits (5 for the coordinate, 5 for the detail)
 - Double (64-bit) provides ~15 digits, sufficient for our zoom range
 
-For deeper zooms (>10^14), arbitrary precision arithmetic would be needed.
+For deeper zooms (>10^14×), arbitrary-precision arithmetic would be needed.
 
 ---
 
 ## GDI Coordinate System
+
+Understanding the coordinate system is essential for correctly mapping camera rays to screen pixels.
 
 ### The Problem
 
@@ -531,12 +530,16 @@ But our camera's "up" direction should point to the top of the screen.
 
 ### The Solution
 
-For a right-handed camera coordinate system:
+We use a right-handed camera coordinate system with Y-up world coordinates:
 
 ```c
-// Camera basis vectors
+// World convention: Y is up
+world_up = (0, 1, 0)
+forward  = normalize(look_at - camera_pos)  // Camera's viewing direction
+
+// Camera basis vectors (right-handed)
 right  = cross(world_up, forward)   // Points to camera's right
-cam_up = cross(forward, right)      // Points to camera's up
+cam_up = cross(forward, right)      // Points to camera's up (orthogonal to forward)
 
 // Pixel to ray mapping
 u = (px/width - 0.5) * aspect * fov   // -0.5 at left, +0.5 at right
@@ -581,9 +584,11 @@ v = (0.5 - py/height) * fov           // +0.5 at top, -0.5 at bottom
 
 3. Mandelbrot, B. (1980). "Fractal aspects of the iteration of z → λz(1-z) for complex λ and z." *Annals of the New York Academy of Sciences*, 357(1), 249-259.
 
-4. Pharr, M., Jakob, W., & Humphreys, G. (2016). *Physically Based Rendering: From Theory to Implementation* (3rd ed.). Morgan Kaufmann.
+4. Bourke, P. "The Mandelbrot Set." https://paulbourke.net/fractals/mandelbrot/ (zoom target coordinates)
 
-5. Intel ISPC User's Guide. https://ispc.github.io/ispc.html
+5. Pharr, M., Jakob, W., & Humphreys, G. (2016). *Physically Based Rendering: From Theory to Implementation* (3rd ed.). Morgan Kaufmann.
+
+6. Intel ISPC User's Guide. https://ispc.github.io/ispc.html
 
 ---
 
