@@ -256,9 +256,9 @@ t = (floor_y - O.y) / D.y
 
 ```c
 inline float intersect_floor(Ray r) {
-    if (abs(r.dir.y) < 0.0001f) return -1.0f;  // Ray parallel to floor
+    if (abs(r.dir.y) < EPSILON_PARALLEL) return -1.0f;  // Ray parallel to floor
     float t = (floor_y - r.origin.y) / r.dir.y;
-    return (t > 0.001f) ? t : -1.0f;
+    return (t > EPSILON_SHADOW) ? t : -1.0f;
 }
 ```
 
@@ -298,15 +298,15 @@ Where:
 The refracted direction is computed by decomposing the ray into components parallel and perpendicular to the surface normal, then applying Snell's Law to the perpendicular component:
 
 ```c
+// Note: assumes v is already normalized (ray directions are normalized at creation)
 inline bool refract(Vec3 v, Vec3 n, float ni_over_nt, Vec3 &refracted) {
-    Vec3 uv = vec3_normalize(v);
-    float dt = vec3_dot(uv, n);  // cos(θ₁)
+    float dt = vec3_dot(v, n);  // cos(θ₁)
     float discriminant = 1.0f - ni_over_nt * ni_over_nt * (1.0f - dt * dt);
 
     if (discriminant > 0.0f) {
         // Perpendicular component scaled by ratio, normal component from geometry
         refracted = vec3_sub(
-            vec3_mul(vec3_sub(uv, vec3_mul(n, dt)), ni_over_nt),
+            vec3_mul(vec3_sub(v, vec3_mul(n, dt)), ni_over_nt),
             vec3_mul(n, sqrt(discriminant))
         );
         return true;
@@ -382,17 +382,17 @@ The shading function handles each material type differently:
 To determine if a point is in shadow, we trace a ray toward the light:
 
 ```c
-Ray shadow_ray = make_ray(hit_point + normal * 0.001f, to_light);
+Ray shadow_ray = make_ray(vec3_add(hit_point, vec3_mul(normal, EPSILON_SHADOW)), to_light);
 float shadow = 1.0f;
 
 if (intersect_sphere(shadow_ray, sphere1_center, sphere1_radius) > 0.0f)
-    shadow = 0.25f;  // In shadow of opaque sphere
+    shadow = SHADOW_OPAQUE;   // In shadow of opaque sphere
 else if (intersect_sphere(shadow_ray, sphere2_center, sphere2_radius) > 0.0f)
-    shadow = 0.6f;   // Partial shadow through glass
+    shadow = SHADOW_GLASS;    // Partial shadow through glass
 ```
 
 **Implementation notes:**
-- The 0.001 offset avoids self-intersection artifacts while remaining small relative to scene scale
+- The EPSILON_SHADOW offset (0.001) avoids self-intersection artifacts while remaining small relative to scene scale
 - Shadow attenuation values (0.25 for opaque, 0.6 for glass) are aesthetic choices—glass transmits more light than opaque surfaces
 
 ---

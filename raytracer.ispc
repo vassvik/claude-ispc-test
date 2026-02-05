@@ -295,11 +295,11 @@ inline Vec3 shade_hit(Ray r, float t, int hit_type, int depth) {
         if (vec3_dot(r.dir, normal) > 0.0f) {
             outward_normal = vec3_mul(normal, -1.0f);
             ni_over_nt = n2 / n1;
-            cos_theta = vec3_dot(r.dir, normal) / vec3_length(r.dir);
+            cos_theta = vec3_dot(r.dir, normal);  // r.dir is normalized
         } else {
             outward_normal = normal;
             ni_over_nt = n1 / n2;
-            cos_theta = -vec3_dot(r.dir, normal) / vec3_length(r.dir);
+            cos_theta = -vec3_dot(r.dir, normal);  // r.dir is normalized
         }
 
         float reflect_prob = fresnel_schlick(cos_theta, n1, n2);
@@ -334,7 +334,7 @@ inline Vec3 shade_hit(Ray r, float t, int hit_type, int depth) {
         else if (intersect_sphere(shadow_ray, sphere2_center, sphere2_radius) > 0.0f) shadow = SHADOW_GLASS;
 
         float diffuse = max(0.0f, vec3_dot(normal, to_light));
-        color = vec3_mul(base_color, (0.2f + 0.8f * diffuse * shadow));
+        color = vec3_mul(base_color, (AMBIENT_STRENGTH + DIFFUSE_STRENGTH * diffuse * shadow));
 
         // Specular
         Vec3 half_vec = vec3_normalize(vec3_add(to_light, view_dir));
