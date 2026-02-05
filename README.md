@@ -552,13 +552,13 @@ v = (0.5 - py/height) * fov           // +0.5 at top, -0.5 at bottom
 
 ## Development Screenshots
 
-### Version 1 (Upside Down)
+### Version 1
 ![Version 1](screenshot_v1.png)
-*Camera coordinate bug - sky at bottom due to incorrect cross product order*
+*Initial version: upside down (sky at bottom), two spheres, purple Mandelbrot palette*
 
-### Version 2 (Fixed)
+### Version 2
 ![Version 2](screenshot_v2.png)
-*Correct orientation after fixing camera basis vectors*
+*Added orange sphere and fire palette, but still upside down*
 
 ---
 
