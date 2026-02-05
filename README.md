@@ -157,7 +157,7 @@ AVX2 provides 4-wide double SIMD (vs 8-wide float), so Mandelbrot runs at half t
 The raytracer is faster despite being more complex because:
 1. Float (8-wide) vs double (4-wide) SIMD
 2. Fixed recursion depth (5) vs variable iterations (200–800)
-3. Most rays terminate within 2–3 bounces; many Mandelbrot points iterate to max
+3. Most rays hit diffuse/sky within 2–3 bounces (no further recursion); many Mandelbrot points iterate to max
 
 ### Compiling for Different Targets
 
@@ -358,17 +358,18 @@ The core algorithm traces rays recursively up to a maximum depth:
 ```c
 inline Vec3 trace_ray(Ray r, int depth) {
     // Find closest intersection
-    float closest_t = 1e10f;
-    int hit_type = -1;
+    float closest_t = T_MAX;
+    int hit_type = HIT_NONE;
 
     // Test all objects...
 
-    if (hit_type >= 0) {
+    if (hit_type != HIT_NONE) {
         return shade_hit(r, closest_t, hit_type, depth);
     }
 
-    // No hit - return sky color
-    return sky_gradient(r.dir);
+    // No hit - return sky gradient based on ray direction
+    float sky_t = clamp(0.5 * (r.dir.y + 1.0), 0.0, 1.0);
+    return vec3_lerp(sky_bottom, sky_top, sky_t);
 }
 ```
 

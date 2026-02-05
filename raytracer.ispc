@@ -27,6 +27,9 @@ static const uniform float SHADOW_OPAQUE = 0.25f;        // Shadow from opaque s
 static const uniform float SHADOW_DIFFUSE = 0.35f;       // Shadow from diffuse sphere
 static const uniform float SHADOW_GLASS = 0.6f;          // Partial shadow through glass
 
+// Ray tracing limits
+static const uniform float T_MAX = 1e10f;                // Maximum ray distance
+
 // Hit type enumeration
 enum HitType {
     HIT_NONE = -1,
@@ -188,7 +191,6 @@ inline Vec3 checkerboard_color(Vec3 p) {
     float scale = 1.5f;  // Larger squares
     int cx = (int)floor(p.x / scale);
     int cz = (int)floor(p.z / scale);
-    // floor() already handles negative coordinates correctly
 
     if ((cx + cz) & 1) {
         return make_vec3(0.95f, 0.95f, 0.95f);  // White
@@ -346,7 +348,7 @@ inline Vec3 shade_hit(Ray r, float t, int hit_type, int depth) {
 }
 
 inline Vec3 trace_ray(Ray r, int depth) {
-    float closest_t = 1e10f;
+    float closest_t = T_MAX;
     int hit_type = HIT_NONE;
 
     // Check floor (bounded rectangle to avoid artifacts at horizon)
