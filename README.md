@@ -554,11 +554,11 @@ v = (0.5 - py/height) * fov           // +0.5 at top, -0.5 at bottom
 
 ### Version 1
 ![Version 1](screenshot_v1.png)
-*Initial version: upside down (sky at bottom), two spheres, purple Mandelbrot palette*
+*Initial version: upside down, two spheres, black/white checkerboard, purple Mandelbrot palette*
 
 ### Version 2
 ![Version 2](screenshot_v2.png)
-*Added orange sphere and fire palette, but still upside down*
+*Still upside down, but improved scene: added orange sphere, blue-gray checkerboard, warm mirror tint, cyan glass tint, floor reflections, soft shadows, fire Mandelbrot palette*
 
 ---
 
