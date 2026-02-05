@@ -1,0 +1,27 @@
+# Build artifacts
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.asm
+*.cod
+*.s
+
+# Auto-generated ISPC header
+raytracer_ispc.h
+gradient_ispc.h
+
+# ISPC compiler (download separately)
+ispc-v1.30.0-windows/
+
+# Old gradient files
+gradient.ispc
+build.bat
+
+# Editor/IDE
+.vs/
+*.suo
+*.user
+
+# Claude Code internal
+.claude/
