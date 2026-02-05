@@ -16,13 +16,13 @@ cd C:\Users\mv2\Dropbox\Claude\test-ispc
 # C++ compile (needs VS env)
 & 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1' -Arch amd64 -SkipAutomaticLocation
 cd C:\Users\mv2\Dropbox\Claude\test-ispc
-cl /nologo /EHsc /O2 main.cpp raytracer_ispc.obj user32.lib gdi32.lib /Fe:gradient.exe
+cl /nologo /EHsc /O2 main.cpp raytracer_ispc.obj user32.lib gdi32.lib /Fe:demo.exe
 ```
 
 ## Run
 
 ```
-.\gradient.exe
+.\demo.exe
 ```
 
 Press Escape to close.

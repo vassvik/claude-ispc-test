@@ -425,7 +425,7 @@ test-ispc/
 ├── main.cpp            # Win32 window, timing, animation
 ├── raytracer_ispc.h    # Auto-generated ISPC header
 ├── raytracer_ispc.obj  # Compiled ISPC object
-├── gradient.exe        # Final executable
+├── demo.exe        # Final executable
 ├── CLAUDE.md           # Build instructions
 ├── summary.md          # This file
 ├── raytracer_v1.ispc   # Backup: first working version
@@ -458,10 +458,10 @@ cd C:\Users\mv2\Dropbox\Claude\test-ispc
 .\ispc-v1.30.0-windows\bin\ispc.exe raytracer.ispc -o raytracer_ispc.obj -h raytracer_ispc.h --target=avx2
 
 # Compile C++ (in VS Developer PowerShell)
-cl /nologo /EHsc /O2 main.cpp raytracer_ispc.obj user32.lib gdi32.lib /Fe:gradient.exe
+cl /nologo /EHsc /O2 main.cpp raytracer_ispc.obj user32.lib gdi32.lib /Fe:demo.exe
 
 # Run
-.\gradient.exe
+.\demo.exe
 ```
 
 Press Escape to close.
