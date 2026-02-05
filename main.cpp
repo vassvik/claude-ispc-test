@@ -94,7 +94,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     QueryPerformanceCounter(&last_stats_time);
 
     MSG msg;
-    int frame = 0;
     bool running = true;
 
     Stats ray_stats, mandel_stats;
@@ -102,11 +101,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     char stats_str[128] = "";
 
     // Mandelbrot zoom parameters
-    // Target: (-0.761574, -0.0847596) - interesting boundary point
+    // Target: (-0.761574, -0.0847596) - interesting boundary point (Misiurewicz point)
     const double mandel_target_x = -0.761574;
     const double mandel_target_y = -0.0847596;
     double zoom = 1.0;
     double zoom_speed = 1.02;  // Exponential zoom factor per frame
+    // Max zoom = 5^7 = 78125x; beyond this, double precision artifacts appear
     double max_zoom = 78125.0;
     bool zooming_in = true;
 
@@ -118,11 +118,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         }
         if (!running) break;
 
-        float time = (float)frame;
-
         // Render Whitted raytracer (static scene)
         QueryPerformanceCounter(&start);
-        ispc::render_whitted(pixels_ray, HALF_WIDTH, HEIGHT, time);
+        ispc::render_whitted(pixels_ray, HALF_WIDTH, HEIGHT);
         QueryPerformanceCounter(&end);
         double ray_ms = (end.QuadPart - start.QuadPart) * 1000.0 / freq.QuadPart;
         ray_stats.add(ray_ms);
@@ -164,7 +162,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             ray_stats.compute();
             mandel_stats.compute();
 
-            sprintf(stats_str, "| Avg: Ray=%.2f+/-%.2f Mandel=%.2f+/-%.2f",
+            snprintf(stats_str, sizeof(stats_str), "| Avg: Ray=%.2f+/-%.2f Mandel=%.2f+/-%.2f",
                 ray_stats.mean, ray_stats.stderr_,
                 mandel_stats.mean, mandel_stats.stderr_);
 
@@ -174,11 +172,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         }
 
         // Title bar: instantaneous + accumulated
-        sprintf(title, "Ray: %.2fms | Mandel: %.2fms | Zoom: %.0fx %s",
+        snprintf(title, sizeof(title), "Ray: %.2fms | Mandel: %.2fms | Zoom: %.0fx %s",
             ray_ms, mandel_ms, zoom, stats_str);
         SetWindowText(hwnd, title);
-
-        frame++;
     }
 
     timeEndPeriod(1);

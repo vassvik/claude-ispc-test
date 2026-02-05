@@ -2,6 +2,19 @@
 // Fixed orientation, optimized Mandelbrot, improved scene
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+// Epsilon values for numerical stability
+static const uniform float EPSILON_SHADOW = 0.001f;    // Offset for shadow/reflection rays
+static const uniform float EPSILON_NORMALIZE = 0.0001f; // Guard for normalization
+static const uniform float EPSILON_PARALLEL = 0.0001f;  // Guard for parallel ray tests
+
+// Mandelbrot constants
+static const uniform double LOG2_E = 1.4426950408889634; // 1/ln(2) for log2 computation
+static const uniform float MANDEL_COLOR_FREQ = 0.015f;   // Color palette cycle frequency
+
+// ============================================================================
 // Vector math utilities
 // ============================================================================
 
@@ -41,7 +54,7 @@ inline float vec3_length(Vec3 v) {
 
 inline Vec3 vec3_normalize(Vec3 v) {
     float len = vec3_length(v);
-    if (len > 0.0001f) {
+    if (len > EPSILON_NORMALIZE) {
         return vec3_mul(v, 1.0f / len);
     }
     return v;
@@ -88,49 +101,49 @@ inline Vec3 ray_at(Ray r, float t) {
 // ============================================================================
 
 // Sphere 1: Reflective (mirror) - larger, on the left
-static const uniform float sphere1_x = -0.8f;
-static const uniform float sphere1_y = 1.0f;
-static const uniform float sphere1_z = 1.0f;
 static const uniform float sphere1_radius = 1.0f;
+static const uniform Vec3 sphere1_center = {-0.8f, 1.0f, 1.0f};
 
 // Sphere 2: Refractive (glass) - smaller, on the right
-static const uniform float sphere2_x = 1.2f;
-static const uniform float sphere2_y = 0.6f;
-static const uniform float sphere2_z = 0.0f;
 static const uniform float sphere2_radius = 0.6f;
+static const uniform Vec3 sphere2_center = {1.2f, 0.6f, 0.0f};
 
 // Sphere 3: Small colored diffuse sphere
-static const uniform float sphere3_x = -0.2f;
-static const uniform float sphere3_y = 0.3f;
-static const uniform float sphere3_z = -0.8f;
 static const uniform float sphere3_radius = 0.3f;
+static const uniform Vec3 sphere3_center = {-0.2f, 0.3f, -0.8f};
 
 // Light position - high and to the right
-static const uniform float light_x = 8.0f;
-static const uniform float light_y = 12.0f;
-static const uniform float light_z = -4.0f;
+static const uniform Vec3 light_pos = {8.0f, 12.0f, -4.0f};
 
 // Checkerboard floor at y = 0
 static const uniform float floor_y = 0.0f;
+
+// Floor visibility bounds (asymmetric in Z to match camera view)
+static const uniform float floor_x_min = -15.0f;
+static const uniform float floor_x_max = 15.0f;
+static const uniform float floor_z_min = -3.0f;
+static const uniform float floor_z_max = 25.0f;
 
 // ============================================================================
 // Ray-sphere intersection
 // ============================================================================
 
+// Ray-sphere intersection using simplified quadratic (assumes normalized ray direction)
 inline float intersect_sphere(Ray r, Vec3 center, float radius) {
     Vec3 oc = vec3_sub(r.origin, center);
-    float a = vec3_dot(r.dir, r.dir);
-    float b = 2.0f * vec3_dot(oc, r.dir);
+    // Since ray direction is normalized, a = dot(dir, dir) = 1.0
+    float half_b = vec3_dot(oc, r.dir);
     float c = vec3_dot(oc, oc) - radius * radius;
-    float discriminant = b * b - 4.0f * a * c;
+    float discriminant = half_b * half_b - c;
 
     if (discriminant < 0.0f) return -1.0f;
 
-    float t = (-b - sqrt(discriminant)) / (2.0f * a);
-    if (t > 0.001f) return t;
+    float sqrt_disc = sqrt(discriminant);
+    float t = -half_b - sqrt_disc;
+    if (t > EPSILON_SHADOW) return t;
 
-    t = (-b + sqrt(discriminant)) / (2.0f * a);
-    if (t > 0.001f) return t;
+    t = -half_b + sqrt_disc;
+    if (t > EPSILON_SHADOW) return t;
 
     return -1.0f;
 }
@@ -140,9 +153,9 @@ inline float intersect_sphere(Ray r, Vec3 center, float radius) {
 // ============================================================================
 
 inline float intersect_floor(Ray r) {
-    if (abs(r.dir.y) < 0.0001f) return -1.0f;
+    if (abs(r.dir.y) < EPSILON_PARALLEL) return -1.0f;
     float t = (floor_y - r.origin.y) / r.dir.y;
-    return (t > 0.001f) ? t : -1.0f;
+    return (t > EPSILON_SHADOW) ? t : -1.0f;
 }
 
 // ============================================================================
@@ -201,30 +214,24 @@ inline Vec3 trace_ray(Ray r, int depth);
 
 inline Vec3 shade_hit(Ray r, float t, int hit_type, int depth) {
     Vec3 hit_point = ray_at(r, t);
-    Vec3 light_pos = make_vec3(light_x, light_y, light_z);
     Vec3 to_light = vec3_normalize(vec3_sub(light_pos, hit_point));
     Vec3 view_dir = vec3_mul(r.dir, -1.0f);
 
     Vec3 color = make_vec3(0.0f, 0.0f, 0.0f);
     Vec3 normal;
 
-    // Sphere centers for shadow tests
-    Vec3 s1_center = make_vec3(sphere1_x, sphere1_y, sphere1_z);
-    Vec3 s2_center = make_vec3(sphere2_x, sphere2_y, sphere2_z);
-    Vec3 s3_center = make_vec3(sphere3_x, sphere3_y, sphere3_z);
-
     if (hit_type == 0) {
         // Floor
         normal = make_vec3(0.0f, 1.0f, 0.0f);
         Vec3 base_color = checkerboard_color(hit_point);
 
-        // Shadow check
-        Ray shadow_ray = make_ray(vec3_add(hit_point, vec3_mul(normal, 0.001f)), to_light);
+        // Shadow check - test all spheres, first hit wins
+        Ray shadow_ray = make_ray(vec3_add(hit_point, vec3_mul(normal, EPSILON_SHADOW)), to_light);
         float shadow = 1.0f;
 
-        if (intersect_sphere(shadow_ray, s1_center, sphere1_radius) > 0.0f) shadow = 0.25f;
-        else if (intersect_sphere(shadow_ray, s2_center, sphere2_radius) > 0.0f) shadow = 0.6f;
-        else if (intersect_sphere(shadow_ray, s3_center, sphere3_radius) > 0.0f) shadow = 0.35f;
+        if (intersect_sphere(shadow_ray, sphere1_center, sphere1_radius) > 0.0f) shadow = 0.25f;
+        else if (intersect_sphere(shadow_ray, sphere2_center, sphere2_radius) > 0.0f) shadow = 0.6f;
+        else if (intersect_sphere(shadow_ray, sphere3_center, sphere3_radius) > 0.0f) shadow = 0.35f;
 
         float diffuse = max(0.0f, vec3_dot(normal, to_light));
         color = vec3_mul(base_color, (0.15f + 0.85f * diffuse * shadow));
@@ -232,18 +239,18 @@ inline Vec3 shade_hit(Ray r, float t, int hit_type, int depth) {
         // Subtle reflection on floor
         if (depth > 0) {
             Vec3 reflect_dir = vec3_reflect(r.dir, normal);
-            Ray reflect_ray = make_ray(vec3_add(hit_point, vec3_mul(normal, 0.001f)), reflect_dir);
+            Ray reflect_ray = make_ray(vec3_add(hit_point, vec3_mul(normal, EPSILON_SHADOW)), reflect_dir);
             Vec3 reflect_color = trace_ray(reflect_ray, depth - 1);
             color = vec3_lerp(color, reflect_color, 0.15f);
         }
     }
     else if (hit_type == 1) {
         // Mirror sphere - pure reflection with slight tint
-        normal = vec3_normalize(vec3_sub(hit_point, s1_center));
+        normal = vec3_normalize(vec3_sub(hit_point, sphere1_center));
 
         if (depth > 0) {
             Vec3 reflect_dir = vec3_reflect(r.dir, normal);
-            Ray reflect_ray = make_ray(vec3_add(hit_point, vec3_mul(normal, 0.001f)), reflect_dir);
+            Ray reflect_ray = make_ray(vec3_add(hit_point, vec3_mul(normal, EPSILON_SHADOW)), reflect_dir);
             color = trace_ray(reflect_ray, depth - 1);
             // Slight warm tint to mirror
             color = vec3_mul_vec(color, make_vec3(1.0f, 0.98f, 0.95f));
@@ -256,7 +263,7 @@ inline Vec3 shade_hit(Ray r, float t, int hit_type, int depth) {
     }
     else if (hit_type == 2) {
         // Glass sphere (refractive)
-        normal = vec3_normalize(vec3_sub(hit_point, s2_center));
+        normal = vec3_normalize(vec3_sub(hit_point, sphere2_center));
 
         float n1 = 1.0f;   // Air
         float n2 = 1.52f;  // Crown glass
@@ -279,11 +286,11 @@ inline Vec3 shade_hit(Ray r, float t, int hit_type, int depth) {
         if (depth > 0) {
             Vec3 refracted;
             Vec3 reflect_dir = vec3_reflect(r.dir, outward_normal);
-            Ray reflect_ray = make_ray(vec3_add(hit_point, vec3_mul(outward_normal, 0.001f)), reflect_dir);
+            Ray reflect_ray = make_ray(vec3_add(hit_point, vec3_mul(outward_normal, EPSILON_SHADOW)), reflect_dir);
             Vec3 reflect_color = trace_ray(reflect_ray, depth - 1);
 
             if (refract(r.dir, outward_normal, ni_over_nt, refracted)) {
-                Ray refract_ray = make_ray(vec3_sub(hit_point, vec3_mul(outward_normal, 0.001f)), refracted);
+                Ray refract_ray = make_ray(vec3_sub(hit_point, vec3_mul(outward_normal, EPSILON_SHADOW)), refracted);
                 Vec3 refract_color = trace_ray(refract_ray, depth - 1);
                 color = vec3_lerp(refract_color, reflect_color, reflect_prob);
             } else {
@@ -296,14 +303,14 @@ inline Vec3 shade_hit(Ray r, float t, int hit_type, int depth) {
     }
     else if (hit_type == 3) {
         // Small diffuse sphere - red/orange
-        normal = vec3_normalize(vec3_sub(hit_point, s3_center));
+        normal = vec3_normalize(vec3_sub(hit_point, sphere3_center));
         Vec3 base_color = make_vec3(0.9f, 0.3f, 0.1f);  // Orange-red
 
-        // Shadow check
-        Ray shadow_ray = make_ray(vec3_add(hit_point, vec3_mul(normal, 0.001f)), to_light);
+        // Shadow check - first hit wins
+        Ray shadow_ray = make_ray(vec3_add(hit_point, vec3_mul(normal, EPSILON_SHADOW)), to_light);
         float shadow = 1.0f;
-        if (intersect_sphere(shadow_ray, s1_center, sphere1_radius) > 0.0f) shadow = 0.3f;
-        if (intersect_sphere(shadow_ray, s2_center, sphere2_radius) > 0.0f) shadow = 0.6f;
+        if (intersect_sphere(shadow_ray, sphere1_center, sphere1_radius) > 0.0f) shadow = 0.3f;
+        else if (intersect_sphere(shadow_ray, sphere2_center, sphere2_radius) > 0.0f) shadow = 0.6f;
 
         float diffuse = max(0.0f, vec3_dot(normal, to_light));
         color = vec3_mul(base_color, (0.2f + 0.8f * diffuse * shadow));
@@ -321,35 +328,33 @@ inline Vec3 trace_ray(Ray r, int depth) {
     float closest_t = 1e10f;
     int hit_type = -1;
 
-    // Check floor
+    // Check floor (bounded rectangle to avoid artifacts at horizon)
     float t_floor = intersect_floor(r);
     if (t_floor > 0.0f && t_floor < closest_t) {
         Vec3 p = ray_at(r, t_floor);
-        if (p.x > -15.0f && p.x < 15.0f && p.z > -3.0f && p.z < 25.0f) {
+        if (p.x > floor_x_min && p.x < floor_x_max &&
+            p.z > floor_z_min && p.z < floor_z_max) {
             closest_t = t_floor;
             hit_type = 0;
         }
     }
 
     // Check sphere 1 (mirror)
-    Vec3 s1_center = make_vec3(sphere1_x, sphere1_y, sphere1_z);
-    float t1 = intersect_sphere(r, s1_center, sphere1_radius);
+    float t1 = intersect_sphere(r, sphere1_center, sphere1_radius);
     if (t1 > 0.0f && t1 < closest_t) {
         closest_t = t1;
         hit_type = 1;
     }
 
     // Check sphere 2 (glass)
-    Vec3 s2_center = make_vec3(sphere2_x, sphere2_y, sphere2_z);
-    float t2 = intersect_sphere(r, s2_center, sphere2_radius);
+    float t2 = intersect_sphere(r, sphere2_center, sphere2_radius);
     if (t2 > 0.0f && t2 < closest_t) {
         closest_t = t2;
         hit_type = 2;
     }
 
     // Check sphere 3 (diffuse)
-    Vec3 s3_center = make_vec3(sphere3_x, sphere3_y, sphere3_z);
-    float t3 = intersect_sphere(r, s3_center, sphere3_radius);
+    float t3 = intersect_sphere(r, sphere3_center, sphere3_radius);
     if (t3 > 0.0f && t3 < closest_t) {
         closest_t = t3;
         hit_type = 3;
@@ -359,7 +364,7 @@ inline Vec3 trace_ray(Ray r, int depth) {
         return shade_hit(r, closest_t, hit_type, depth);
     }
 
-    // Sky gradient - nice blue gradient
+    // Sky gradient - lerp from light blue (horizon) to deeper blue (zenith)
     float sky_t = 0.5f * (r.dir.y + 1.0f);
     sky_t = clamp(sky_t, 0.0f, 1.0f);
     Vec3 sky_bottom = make_vec3(0.6f, 0.75f, 0.9f);
@@ -371,35 +376,36 @@ inline Vec3 trace_ray(Ray r, int depth) {
 // Whitted Raytracer Entry Point
 // ============================================================================
 
-export void render_whitted(uniform uint32 pixels[], uniform int width, uniform int height, uniform float time) {
+export void render_whitted(uniform uint32 pixels[], uniform int width, uniform int height) {
     // Camera setup - classic Whitted angle
     uniform Vec3 camera_pos = {0.5f, 2.0f, -4.5f};
     uniform Vec3 look_at = {0.2f, 0.5f, 1.0f};
     uniform Vec3 world_up = {0.0f, 1.0f, 0.0f};
 
-    uniform float fov = 1.0f;  // Field of view
+    uniform float fov = 1.0f;  // Field of view (radians)
     uniform float aspect = (float)width / (float)height;
 
-    // Camera basis vectors
+    // Camera basis vectors - forward direction from camera to look_at
     uniform Vec3 forward = {
         look_at.x - camera_pos.x,
         look_at.y - camera_pos.y,
         look_at.z - camera_pos.z
     };
     uniform float fwd_len = sqrt(forward.x*forward.x + forward.y*forward.y + forward.z*forward.z);
+    if (fwd_len < EPSILON_NORMALIZE) return;  // Guard against camera at look_at
     forward.x /= fwd_len; forward.y /= fwd_len; forward.z /= fwd_len;
 
-    // Camera basis vectors (right-handed coordinate system)
-    // right = cross(world_up, forward) → points to camera's right
+    // right = cross(world_up, forward) → camera's rightward direction
     uniform Vec3 right = {
         world_up.y * forward.z - world_up.z * forward.y,
         world_up.z * forward.x - world_up.x * forward.z,
         world_up.x * forward.y - world_up.y * forward.x
     };
     uniform float right_len = sqrt(right.x*right.x + right.y*right.y + right.z*right.z);
+    if (right_len < EPSILON_NORMALIZE) return;  // Guard against looking straight up/down
     right.x /= right_len; right.y /= right_len; right.z /= right_len;
 
-    // cam_up = cross(forward, right) → points to camera's up
+    // cam_up = cross(forward, right) → camera's upward direction
     uniform Vec3 cam_up = {
         forward.y * right.z - forward.z * right.y,
         forward.z * right.x - forward.x * right.z,
@@ -442,28 +448,7 @@ export void render_whitted(uniform uint32 pixels[], uniform int width, uniform i
 // Mandelbrot Set Renderer - Optimized
 // ============================================================================
 
-inline Vec3 hsv_to_rgb(float h, float s, float v) {
-    float c = v * s;
-    float hh = h * 6.0f;
-    float x = c * (1.0f - abs(hh - 2.0f * floor(hh * 0.5f) - 1.0f));
-    float m = v - c;
-
-    float r1, g1, b1;
-    int hi = (int)hh;
-    if (hi < 0) hi = 0;
-    if (hi > 5) hi = 5;
-
-    if (hi == 0)      { r1 = c; g1 = x; b1 = 0; }
-    else if (hi == 1) { r1 = x; g1 = c; b1 = 0; }
-    else if (hi == 2) { r1 = 0; g1 = c; b1 = x; }
-    else if (hi == 3) { r1 = 0; g1 = x; b1 = c; }
-    else if (hi == 4) { r1 = x; g1 = 0; b1 = c; }
-    else              { r1 = c; g1 = 0; b1 = x; }
-
-    return make_vec3(r1 + m, g1 + m, b1 + m);
-}
-
-// Fire/plasma color palette - more vibrant
+// Fire/plasma color palette - vibrant gradient through blue-cyan-yellow-orange-red
 inline Vec3 palette(float t) {
     // Attempt a nice fire-like palette
     t = clamp(t, 0.0f, 1.0f);
@@ -523,15 +508,16 @@ export void render_mandelbrot(uniform uint32 pixels[], uniform int width, unifor
         if (iter == max_iter) {
             color = 0xFF000000u;  // Black for points in set
         } else {
-            // Smooth coloring
+            // Smooth coloring using continuous potential method
+            // log2(|z|) = log(|z|) * log2(e) = log(x2+y2) * 0.5 * LOG2_E
             double log_zn = log(x2 + y2) * 0.5;
-            double nu = log(log_zn * 1.4426950408889634) * 1.4426950408889634;  // log2 constants
+            double nu = log(log_zn * LOG2_E) * LOG2_E;
             double smooth_iter = (double)iter + 1.0 - nu;
             if (smooth_iter < 0.0) smooth_iter = 0.0;
 
-            // Map to color palette
-            float t = (float)(smooth_iter * 0.015);
-            t = t - floor(t);  // Wrap to 0-1
+            // Map to color palette with wrapping
+            float t = (float)(smooth_iter * MANDEL_COLOR_FREQ);
+            t = t - floor(t);  // Wrap to [0, 1]
 
             Vec3 rgb = palette(t);
 
